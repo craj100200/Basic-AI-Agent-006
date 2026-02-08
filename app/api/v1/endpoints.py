@@ -1,10 +1,15 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pathlib import Path
 from app.agents.input_agent import InputAgent
+from app.agents.planner_agent import PlannerAgent
 from app.api.v1.schemas import (
     ValidateInputRequest,
     ValidateInputResponse,
     SlideResponse,
+    CreatePlanRequest,
+    CreatePlanResponse,
+    ThemeResponse,
+    SlideLayoutResponse,
     ErrorResponse
 )
 from app.config import settings
@@ -25,11 +30,7 @@ def validate_input(request: ValidateInputRequest):
     
     Validates and parses presentation input in the format:
 ```
-    [SLIDE_START]
-    [TITLE_START]Title Here[TITLE_END]
-    Content line 1
-    Content line 2
-    [SLIDE_END]
+    [SLIDE_START][TITLE_START]Title[TITLE_END][BULLET_START]Point 1[BULLET_END][SLIDE_END]
 ```
     
     Returns structured, validated slide data.
@@ -78,7 +79,7 @@ async def validate_input_file(file: UploadFile = File(...)):
     **Step 1: Input Agent (File Upload)**
     
     Upload a text file containing presentation content.
-    File should use the same [SLIDE_START]...[SLIDE_END] format.
+    File should use the same tag-based format.
     """
     try:
         # Validate file type
@@ -121,3 +122,105 @@ async def validate_input_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.exception("API: Unexpected error during file validation")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post(
+    "/create-plan",
+    response_model=CreatePlanResponse,
+    summary="Create presentation plan",
+    description="Generate a complete presentation plan with theme and layout decisions"
+)
+def create_plan(request: CreatePlanRequest):
+    """
+    **Step 2: Planner Agent**
+    
+    Takes validated slide content and creates a complete presentation plan including:
+    - Theme selection (colors, fonts)
+    - Slide durations based on content
+    - Font sizes optimized for readability
+    - Layout decisions
+    
+    Available themes:
+    - corporate_blue (default)
+    - modern_dark
+    - minimal_light
+    - vibrant_purple
+    """
+    try:
+        logger.info("API: Received plan creation request")
+        
+        # Step 1: Validate input
+        validated_input = InputAgent.validate_input(content=request.content)
+        logger.info(f"Input validated: {len(validated_input.slides)} slides")
+        
+        # Step 2: Create plan
+        plan = PlannerAgent.create_plan(
+            validated_input=validated_input,
+            theme_name=request.theme_name
+        )
+        
+        # Build response
+        response = CreatePlanResponse(
+            status="success",
+            message=f"Plan created for {plan.slide_count} slides, total duration: {plan.total_duration}s",
+            theme=ThemeResponse(
+                name=plan.theme.name,
+                background_color=plan.theme.background_color,
+                text_color=plan.theme.text_color,
+                accent_color=plan.theme.accent_color,
+                font_family=plan.theme.font_family
+            ),
+            slides=[
+                SlideLayoutResponse(
+                    slide_number=slide.slide_number,
+                    title=slide.title,
+                    content=slide.content,
+                    layout=slide.layout,
+                    duration_seconds=slide.duration_seconds,
+                    font_size_title=slide.font_size_title,
+                    font_size_content=slide.font_size_content
+                )
+                for slide in plan.slides
+            ],
+            total_duration=plan.total_duration,
+            slide_count=plan.slide_count
+        )
+        
+        logger.info(f"API: Plan created successfully - {plan.slide_count} slides, {plan.total_duration}s")
+        return response
+        
+    except ValueError as e:
+        logger.warning(f"API: Plan creation failed - {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("API: Unexpected error during plan creation")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/themes",
+    summary="List available themes",
+    description="Get list of all available presentation themes"
+)
+def list_themes():
+    """
+    **Get Available Themes**
+    
+    Returns all available themes with their color configurations.
+    """
+    themes = [
+        ThemeResponse(
+            name=theme.name,
+            background_color=theme.background_color,
+            text_color=theme.text_color,
+            accent_color=theme.accent_color,
+            font_family=theme.font_family
+        )
+        for theme in PlannerAgent.THEMES.values()
+    ]
+    
+    return {
+        "status": "success",
+        "themes": themes,
+        "count": len(themes)
+    }

@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 
 
+# Existing schemas (keep these)
 class ValidateInputRequest(BaseModel):
     """Request body for input validation endpoint"""
     
@@ -28,6 +29,53 @@ class ValidateInputResponse(BaseModel):
     slide_count: int
     total_content_lines: int
     slides: List[SlideResponse]
+
+
+# NEW: Planner schemas
+class CreatePlanRequest(BaseModel):
+    """Request body for creating presentation plan"""
+    
+    content: str = Field(
+        ...,
+        description="Raw presentation content in tag-based format"
+    )
+    theme_name: Optional[str] = Field(
+        None,
+        description="Theme name: corporate_blue, modern_dark, minimal_light, vibrant_purple"
+    )
+
+
+class ThemeResponse(BaseModel):
+    """Theme configuration in response"""
+    
+    name: str
+    background_color: str
+    text_color: str
+    accent_color: str
+    font_family: str
+
+
+class SlideLayoutResponse(BaseModel):
+    """Slide layout in response"""
+    
+    slide_number: int
+    title: str
+    content: List[str]
+    layout: str
+    duration_seconds: int
+    font_size_title: int
+    font_size_content: int
+
+
+class CreatePlanResponse(BaseModel):
+    """Response from plan creation endpoint"""
+    
+    status: str
+    message: str
+    theme: ThemeResponse
+    slides: List[SlideLayoutResponse]
+    total_duration: int
+    slide_count: int
 
 
 class ErrorResponse(BaseModel):
