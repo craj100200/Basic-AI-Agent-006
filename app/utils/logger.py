@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from loguru import logger
 from app.config import settings
 
@@ -13,9 +14,12 @@ logger.add(
     level="DEBUG" if settings.DEBUG else "INFO"
 )
 
-# Optional: Add file logging
+# Optional: Add file logging (create logs dir first)
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+
 logger.add(
-    "logs/app.log",
+    log_dir / "app.log",
     rotation="500 MB",
     retention="10 days",
     level="INFO"
