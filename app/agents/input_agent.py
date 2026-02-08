@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, validator
 from pathlib import Path
 from app.config import settings
 from app.utils.logger import logger
+import re
 
 
 class Slide(BaseModel):
@@ -52,23 +53,29 @@ class PresentationInput(BaseModel):
 class InputAgent:
     """
     Agent responsible for validating and parsing presentation input.
-    Supports the custom [SLIDE_START]...[SLIDE_END] format.
+    
+    Supported format:
+    [SLIDE_START][TITLE_START]Your Title[TITLE_END][BULLET_START]Point 1[BULLET_END][BULLET_START]Point 2[BULLET_END][SLIDE_END]
+    
+    This format is whitespace/newline independent.
     """
     
     @staticmethod
     def parse_slide_format(raw_text: str) -> PresentationInput:
         """
-        Parse the [SLIDE_START]...[SLIDE_END] format into structured slides.
+        Parse the tag-based format into structured slides.
         
-        Expected format:
+        Format:
         [SLIDE_START]
-        [TITLE_START]Your Title Here[TITLE_END]
-        Content line 1
-        Content line 2
+          [TITLE_START]Title Here[TITLE_END]
+          [BULLET_START]Bullet point 1[BULLET_END]
+          [BULLET_START]Bullet point 2[BULLET_END]
         [SLIDE_END]
         
+        Whitespace and newlines are ignored - only tags matter.
+        
         Args:
-            raw_text: Raw text input in the custom format
+            raw_text: Raw text input in the tag format
             
         Returns:
             PresentationInput: Validated presentation structure
@@ -76,73 +83,48 @@ class InputAgent:
         Raises:
             ValueError: If format is invalid or validation fails
         """
+        # Remove all newlines and extra whitespace for easier parsing
+        # But preserve spaces within content
+        normalized_text = ' '.join(raw_text.split())
+        
+        # Find all slides
+        slide_pattern = r'\[SLIDE_START\](.*?)\[SLIDE_END\]'
+        slide_matches = re.findall(slide_pattern, normalized_text, re.DOTALL)
+        
+        if not slide_matches:
+            raise ValueError("No slides found. Make sure to use [SLIDE_START]...[SLIDE_END] tags.")
+        
         slides = []
-        current_slide_active = False
-        current_title = None
-        current_content = []
-        in_title = False
         
-        lines = raw_text.split('\n')
-        
-        for line_num, line in enumerate(lines, 1):
-            line = line.strip()
+        for slide_idx, slide_content in enumerate(slide_matches, 1):
+            logger.debug(f"Parsing slide {slide_idx}")
             
-            # Skip empty lines outside of slides
-            if not line and not current_slide_active:
-                continue
+            # Extract title
+            title_pattern = r'\[TITLE_START\](.*?)\[TITLE_END\]'
+            title_match = re.search(title_pattern, slide_content)
             
-            if line == '[SLIDE_START]':
-                if current_slide_active:
-                    raise ValueError(f"Line {line_num}: Nested [SLIDE_START] detected. Close previous slide first.")
-                current_slide_active = True
-                current_content = []
-                current_title = None
-                logger.debug(f"Started new slide at line {line_num}")
-                
-            elif line == '[SLIDE_END]':
-                if not current_slide_active:
-                    raise ValueError(f"Line {line_num}: [SLIDE_END] without matching [SLIDE_START]")
-                
-                if not current_title:
-                    raise ValueError(f"Line {line_num}: Slide ended without a title")
-                
-                if not current_content:
-                    raise ValueError(f"Line {line_num}: Slide '{current_title}' has no content")
-                
-                slides.append(Slide(title=current_title, content=current_content))
-                logger.debug(f"Completed slide: '{current_title}' with {len(current_content)} content lines")
-                current_slide_active = False
-                
-            elif line == '[TITLE_START]':
-                if not current_slide_active:
-                    raise ValueError(f"Line {line_num}: [TITLE_START] outside of slide")
-                if in_title:
-                    raise ValueError(f"Line {line_num}: Nested [TITLE_START] detected")
-                in_title = True
-                
-            elif line == '[TITLE_END]':
-                if not in_title:
-                    raise ValueError(f"Line {line_num}: [TITLE_END] without matching [TITLE_START]")
-                in_title = False
-                
-            elif in_title:
-                if current_title:
-                    raise ValueError(f"Line {line_num}: Multiple title lines detected. Title should be on one line.")
-                current_title = line
-                
-            elif current_slide_active and line:
-                # This is content
-                current_content.append(line)
-        
-        # Check for unclosed slides
-        if current_slide_active:
-            raise ValueError("Unclosed slide detected. Missing [SLIDE_END]")
-        
-        if in_title:
-            raise ValueError("Unclosed title detected. Missing [TITLE_END]")
-        
-        if not slides:
-            raise ValueError("No slides found in input")
+            if not title_match:
+                raise ValueError(f"Slide {slide_idx}: Missing title. Use [TITLE_START]...[TITLE_END] tags.")
+            
+            title = title_match.group(1).strip()
+            if not title:
+                raise ValueError(f"Slide {slide_idx}: Title is empty")
+            
+            # Extract bullets/content
+            bullet_pattern = r'\[BULLET_START\](.*?)\[BULLET_END\]'
+            bullet_matches = re.findall(bullet_pattern, slide_content)
+            
+            if not bullet_matches:
+                raise ValueError(f"Slide {slide_idx}: '{title}' has no content. Use [BULLET_START]...[BULLET_END] tags.")
+            
+            # Clean up bullets
+            content_lines = [bullet.strip() for bullet in bullet_matches if bullet.strip()]
+            
+            if not content_lines:
+                raise ValueError(f"Slide {slide_idx}: '{title}' has no non-empty content")
+            
+            slides.append(Slide(title=title, content=content_lines))
+            logger.debug(f"Slide {slide_idx}: '{title}' with {len(content_lines)} bullets")
         
         logger.info(f"Successfully parsed {len(slides)} slides")
         return PresentationInput(slides=slides)
@@ -154,8 +136,8 @@ class InputAgent:
         Validates and parses presentation input from either direct content or file.
         
         Args:
-            content: Raw text content in slide format
-            file_path: Path to text file containing slide format
+            content: Raw text content in tag format
+            file_path: Path to text file containing tag format
             
         Returns:
             PresentationInput: Validated presentation structure

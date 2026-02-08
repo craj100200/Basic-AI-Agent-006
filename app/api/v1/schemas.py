@@ -7,12 +7,8 @@ class ValidateInputRequest(BaseModel):
     
     content: str = Field(
         ...,
-        description="Raw presentation content in [SLIDE_START]...[SLIDE_END] format",
-        example="""[SLIDE_START]
-[TITLE_START]Introduction to AI[TITLE_END]
-Artificial Intelligence is transforming our world.
-Key areas: Machine Learning, NLP, Computer Vision.
-[SLIDE_END]"""
+        description="Raw presentation content in tag-based format",
+        example="[SLIDE_START][TITLE_START]Introduction to AI[TITLE_END][BULLET_START]AI is transforming our world[BULLET_END][BULLET_START]Machine Learning is a key component[BULLET_END][SLIDE_END]"
     )
 
 
