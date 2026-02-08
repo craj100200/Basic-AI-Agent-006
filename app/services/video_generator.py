@@ -1,7 +1,9 @@
 from pathlib import Path
 from typing import List, Tuple
 from abc import ABC, abstractmethod
-from moviepy.editor import ImageClip, concatenate_videoclips
+import cv2
+import numpy as np
+from PIL import Image
 from app.utils.logger import logger
 
 
@@ -9,7 +11,7 @@ class VideoGenerator(ABC):
     """
     Abstract base class for video generation.
     
-    This allows us to swap implementations (MoviePy → OpenCV) easily.
+    This allows us to swap implementations easily.
     """
     
     @abstractmethod
@@ -33,19 +35,18 @@ class VideoGenerator(ABC):
         pass
 
 
-class MoviePyGenerator(VideoGenerator):
+class OpenCVGenerator(VideoGenerator):
     """
-    Video generator using MoviePy library.
+    Video generator using OpenCV library.
     
-    Current implementation - easy to use, feature-rich.
-    UPGRADE_LATER: Swap to OpenCVGenerator for better performance.
+    Pros: Fast, lightweight, low memory usage (perfect for Render free tier)
+    Cons: No fancy transitions (but we don't need them for slides)
     """
     
     def __init__(self):
-        """Initialize MoviePy generator"""
-        self.codec = 'libx264'  # H.264 codec for maximum compatibility
-        self.audio_codec = 'aac'  # Standard audio codec
-        self.preset = 'medium'  # Encoding speed vs compression (ultrafast/fast/medium/slow)
+        """Initialize OpenCV generator"""
+        self.width = 1920
+        self.height = 1080
         
     def create_video(
         self,
@@ -54,15 +55,16 @@ class MoviePyGenerator(VideoGenerator):
         fps: int = 30
     ) -> Path:
         """
-        Create video using MoviePy.
+        Create video using OpenCV.
+        
+        This is MUCH lighter than MoviePy - uses ~50MB RAM vs 200MB+
         
         Settings:
         - Resolution: 1920x1080 (Full HD)
         - FPS: 30 (smooth playback)
-        - Codec: H.264 (libx264)
-        - Quality: High
+        - Codec: mp4v (widely compatible)
         """
-        logger.info(f"MoviePy: Creating video with {len(slide_data)} slides at {fps} fps")
+        logger.info(f"OpenCV: Creating video with {len(slide_data)} slides at {fps} fps")
         
         if not slide_data:
             raise ValueError("No slides provided for video generation")
@@ -72,78 +74,89 @@ class MoviePyGenerator(VideoGenerator):
             if not slide_path.exists():
                 raise FileNotFoundError(f"Slide not found: {slide_path}")
         
-        clips = []
-        total_duration = 0
-        
-        # Create clips for each slide
-        for idx, (slide_path, duration) in enumerate(slide_data, 1):
-            logger.debug(f"Processing slide {idx}/{len(slide_data)}: {slide_path.name} ({duration}s)")
-            
-            # Create image clip with specified duration
-            clip = ImageClip(str(slide_path)).set_duration(duration)
-            clips.append(clip)
-            total_duration += duration
-        
-        logger.info(f"Total video duration: {total_duration} seconds")
-        
-        # Concatenate all clips
-        logger.info("Concatenating clips...")
-        final_clip = concatenate_videoclips(clips, method="compose")
-        
         # Ensure output directory exists
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # Write video file
-        logger.info(f"Writing video to: {output_path}")
-        final_clip.write_videofile(
+        # Initialize video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(
             str(output_path),
-            fps=fps,
-            codec=self.codec,
-            audio_codec=self.audio_codec,
-            preset=self.preset,
-            logger=None,  # Suppress MoviePy's verbose logging
-            verbose=False
+            fourcc,
+            fps,
+            (self.width, self.height)
         )
         
-        # Clean up
-        final_clip.close()
-        for clip in clips:
-            clip.close()
+        if not out.isOpened():
+            raise RuntimeError("Failed to initialize video writer")
         
-        logger.info(f"Video created successfully: {output_path} ({total_duration}s)")
+        total_frames = 0
+        total_duration = 0
+        
+        # Process each slide
+        for idx, (slide_path, duration) in enumerate(slide_data, 1):
+            logger.debug(f"Processing slide {idx}/{len(slide_data)}: {slide_path.name} ({duration}s)")
+            
+            # Load image using PIL (better compatibility)
+            try:
+                pil_image = Image.open(slide_path)
+                
+                # Convert PIL to OpenCV format (RGB -> BGR)
+                image_rgb = np.array(pil_image)
+                image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+                
+                # Resize if needed (should already be correct size)
+                if image_bgr.shape[:2] != (self.height, self.width):
+                    image_bgr = cv2.resize(image_bgr, (self.width, self.height))
+                
+            except Exception as e:
+                logger.error(f"Failed to load slide {slide_path}: {e}")
+                raise
+            
+            # Calculate number of frames for this slide
+            num_frames = int(duration * fps)
+            
+            # Write the same frame multiple times (one per frame duration)
+            for frame_num in range(num_frames):
+                out.write(image_bgr)
+                total_frames += 1
+            
+            total_duration += duration
+            
+            # Free memory
+            del image_bgr
+            del pil_image
+        
+        # Release video writer
+        out.release()
+        
+        logger.info(
+            f"Video created successfully: {output_path} "
+            f"({total_duration}s, {total_frames} frames)"
+        )
         return output_path
 
 
-# UPGRADE_LATER: OpenCV implementation for better performance
-#
-# class OpenCVGenerator(VideoGenerator):
-#     """
-#     Video generator using OpenCV.
+# Keep MoviePy for reference (commented out to save memory)
+# 
+# class MoviePyGenerator(VideoGenerator):
+#     """MoviePy implementation - heavier but has more features"""
 #     
-#     Pros: Faster, lighter, better performance on Render
-#     Cons: More complex code, manual frame calculation
-#     """
-#     
-#     def create_video(
-#         self,
-#         slide_data: List[Tuple[Path, int]],
-#         output_path: Path,
-#         fps: int = 30
-#     ) -> Path:
-#         import cv2
-#         import numpy as np
+#     def create_video(self, slide_data, output_path, fps=30):
+#         from moviepy.editor import ImageClip, concatenate_videoclips
 #         
-#         # Video settings
-#         width, height = 1920, 1080
-#         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-#         out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-#         
+#         clips = []
 #         for slide_path, duration in slide_data:
-#             img = cv2.imread(str(slide_path))
-#             frames = int(duration * fps)
-#             
-#             for _ in range(frames):
-#                 out.write(img)
+#             clip = ImageClip(str(slide_path)).set_duration(duration)
+#             clips.append(clip)
 #         
-#         out.release()
+#         final_clip = concatenate_videoclips(clips, method="compose")
+#         final_clip.write_videofile(
+#             str(output_path),
+#             fps=fps,
+#             codec='libx264',
+#             logger=None,
+#             verbose=False
+#         )
+#         
+#         final_clip.close()
 #         return output_path

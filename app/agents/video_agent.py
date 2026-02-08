@@ -3,7 +3,7 @@ from typing import List, Tuple
 from pydantic import BaseModel, Field
 from app.agents.planner_agent import PresentationPlan
 from app.agents.slide_agent import SlideRenderResult
-from app.services.video_generator import MoviePyGenerator, VideoGenerator
+from app.services.video_generator import OpenCVGenerator, VideoGenerator  # Changed
 from app.config import settings
 from app.utils.logger import logger
 
@@ -25,8 +25,7 @@ class VideoAgent:
     """
     Agent responsible for generating video from rendered slides.
     
-    Uses VideoGenerator service to create MP4 files.
-    UPGRADE_LATER: Can swap MoviePyGenerator → OpenCVGenerator for performance
+    Uses OpenCV for lightweight, fast video generation (perfect for Render free tier)
     """
     
     def __init__(self, generator: VideoGenerator = None):
@@ -34,9 +33,9 @@ class VideoAgent:
         Initialize Video Agent.
         
         Args:
-            generator: Custom video generator (optional, defaults to MoviePyGenerator)
+            generator: Custom video generator (optional, defaults to OpenCVGenerator)
         """
-        self.generator = generator or MoviePyGenerator()
+        self.generator = generator or OpenCVGenerator()  # Changed from MoviePyGenerator
     
     def create_video(
         self,
