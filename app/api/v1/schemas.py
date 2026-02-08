@@ -108,3 +108,35 @@ class RenderSlidesResponse(BaseModel):
     slide_filenames: List[str]
     theme_used: str
     total_duration: int
+
+
+class GenerateVideoRequest(BaseModel):
+    """Request body for video generation"""
+    
+    content: str = Field(
+        ...,
+        description="Raw presentation content in tag-based format"
+    )
+    theme_name: Optional[str] = Field(
+        None,
+        description="Theme name: corporate_blue, modern_dark, minimal_light, vibrant_purple"
+    )
+    filename: Optional[str] = Field(
+        "presentation.mp4",
+        description="Output video filename",
+        pattern=r"^[\w\-. ]+\.mp4$"
+    )
+
+
+class GenerateVideoResponse(BaseModel):
+    """Response from video generation"""
+    
+    status: str
+    message: str
+    video_filename: str
+    duration_seconds: int
+    slide_count: int
+    file_size_mb: float
+    resolution: str
+    fps: int
+    theme_used: str

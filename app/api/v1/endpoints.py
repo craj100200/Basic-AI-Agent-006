@@ -3,6 +3,7 @@ from pathlib import Path
 from app.agents.input_agent import InputAgent
 from app.agents.planner_agent import PlannerAgent
 from app.agents.slide_agent import SlideAgent
+from app.agents.video_agent import VideoAgent
 
 from app.api.v1.schemas import (
     ValidateInputRequest,
@@ -15,6 +16,9 @@ from app.api.v1.schemas import (
     ErrorResponse,
     RenderSlidesRequest,
     RenderSlidesResponse,
+    GenerateVideoRequest,
+    GenerateVideoResponse,
+
 )
 from app.config import settings
 from app.utils.logger import logger
@@ -316,3 +320,145 @@ def download_slide(filename: str):
         media_type="image/png",
         filename=filename
     )
+
+
+
+
+@router.post(
+    "/generate-video",
+    response_model=GenerateVideoResponse,
+    summary="Generate presentation video",
+    description="Complete end-to-end video generation from content"
+)
+def generate_video(request: GenerateVideoRequest):
+    """
+    **Step 4: Video Agent (Complete Pipeline)**
+    
+    Generates a complete presentation video from content.
+    
+    Full process:
+    1. Validates input (Input Agent)
+    2. Creates plan (Planner Agent)
+    3. Renders slides (Slide Agent)
+    4. Generates video (Video Agent)
+    
+    Returns video file information with download link.
+    """
+    try:
+        logger.info("API: Received video generation request")
+        
+        # Step 1: Validate input
+        validated_input = InputAgent.validate_input(content=request.content)
+        logger.info(f"Step 1 complete: {len(validated_input.slides)} slides validated")
+        
+        # Step 2: Create plan
+        plan = PlannerAgent.create_plan(
+            validated_input=validated_input,
+            theme_name=request.theme_name
+        )
+        logger.info(f"Step 2 complete: Plan created ({plan.total_duration}s, theme={plan.theme.name})")
+        
+        # Step 3: Render slides
+        slide_agent = SlideAgent()
+        slide_result = slide_agent.render_slides(plan)
+        logger.info(f"Step 3 complete: {slide_result.slide_count} slides rendered")
+        
+        # Step 4: Generate video
+        video_agent = VideoAgent()
+        video_result = video_agent.create_video(
+            plan=plan,
+            slide_result=slide_result,
+            output_filename=request.filename
+        )
+        logger.info(f"Step 4 complete: Video generated ({video_result.file_size_mb}MB)")
+        
+        # Build response
+        response = GenerateVideoResponse(
+            status="success",
+            message=f"Video generated successfully: {video_result.video_path.name}",
+            video_filename=video_result.video_path.name,
+            duration_seconds=video_result.duration_seconds,
+            slide_count=video_result.slide_count,
+            file_size_mb=video_result.file_size_mb,
+            resolution=video_result.resolution,
+            fps=video_result.fps,
+            theme_used=plan.theme.name
+        )
+        
+        logger.info(f"API: Video generation complete - {video_result.video_path.name}")
+        return response
+        
+    except ValueError as e:
+        logger.warning(f"API: Video generation failed - {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("API: Unexpected error during video generation")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/download-video/{filename}",
+    summary="Download generated video",
+    description="Download a generated presentation video"
+)
+def download_video(filename: str):
+    """
+    **Download Video**
+    
+    Downloads a generated video file.
+    Filename should be like: presentation.mp4
+    """
+    from fastapi.responses import FileResponse
+    
+    # Security: prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    if not filename.endswith('.mp4'):
+        raise HTTPException(status_code=400, detail="Only .mp4 files are supported")
+    
+    video_path = settings.WORKSPACE_DIR / "videos" / filename
+    
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {filename}")
+    
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=filename
+    )
+
+
+@router.get(
+    "/list-videos",
+    summary="List generated videos",
+    description="Get list of all generated videos"
+)
+def list_videos():
+    """
+    **List Videos**
+    
+    Returns list of all generated video files with metadata.
+    """
+    video_dir = settings.WORKSPACE_DIR / "videos"
+    
+    if not video_dir.exists():
+        return {"status": "success", "videos": [], "count": 0}
+    
+    videos = []
+    for video_file in video_dir.glob("*.mp4"):
+        file_size_mb = video_file.stat().st_size / (1024 * 1024)
+        videos.append({
+            "filename": video_file.name,
+            "size_mb": round(file_size_mb, 2),
+            "created_at": video_file.stat().st_mtime
+        })
+    
+    # Sort by creation time (newest first)
+    videos.sort(key=lambda x: x["created_at"], reverse=True)
+    
+    return {
+        "status": "success",
+        "videos": videos,
+        "count": len(videos)
+    }
