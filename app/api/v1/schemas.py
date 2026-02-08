@@ -83,3 +83,28 @@ class ErrorResponse(BaseModel):
     
     status: str = "error"
     detail: str
+
+
+# NEW: Slide rendering schemas
+class RenderSlidesRequest(BaseModel):
+    """Request body for rendering slides"""
+    
+    content: str = Field(
+        ...,
+        description="Raw presentation content in tag-based format"
+    )
+    theme_name: Optional[str] = Field(
+        None,
+        description="Theme name: corporate_blue, modern_dark, minimal_light, vibrant_purple"
+    )
+
+
+class RenderSlidesResponse(BaseModel):
+    """Response from slide rendering"""
+    
+    status: str
+    message: str
+    slide_count: int
+    slide_filenames: List[str]
+    theme_used: str
+    total_duration: int

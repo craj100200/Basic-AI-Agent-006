@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pathlib import Path
 from app.agents.input_agent import InputAgent
 from app.agents.planner_agent import PlannerAgent
+from app.agents.slide_agent import SlideAgent
+
 from app.api.v1.schemas import (
     ValidateInputRequest,
     ValidateInputResponse,
@@ -10,7 +12,9 @@ from app.api.v1.schemas import (
     CreatePlanResponse,
     ThemeResponse,
     SlideLayoutResponse,
-    ErrorResponse
+    ErrorResponse,
+    RenderSlidesRequest,
+    RenderSlidesResponse,
 )
 from app.config import settings
 from app.utils.logger import logger
@@ -224,3 +228,91 @@ def list_themes():
         "themes": themes,
         "count": len(themes)
     }
+
+
+@router.post(
+    "/render-slides",
+    response_model=RenderSlidesResponse,
+    summary="Render presentation slides",
+    description="Generate PNG images for all slides in the presentation"
+)
+def render_slides(request: RenderSlidesRequest):
+    """
+    **Step 3: Slide Agent**
+    
+    Takes presentation content and generates PNG images for each slide.
+    
+    Process:
+    1. Validates input (Step 1)
+    2. Creates plan (Step 2)
+    3. Renders slides as PNG images (Step 3)
+    
+    Returns list of generated slide filenames.
+    """
+    try:
+        logger.info("API: Received slide rendering request")
+        
+        # Step 1: Validate input
+        validated_input = InputAgent.validate_input(content=request.content)
+        logger.info(f"Input validated: {len(validated_input.slides)} slides")
+        
+        # Step 2: Create plan
+        plan = PlannerAgent.create_plan(
+            validated_input=validated_input,
+            theme_name=request.theme_name
+        )
+        logger.info(f"Plan created: {plan.slide_count} slides, theme={plan.theme.name}")
+        
+        # Step 3: Render slides
+        slide_agent = SlideAgent()
+        result = slide_agent.render_slides(plan)
+        
+        # Build response
+        response = RenderSlidesResponse(
+            status="success",
+            message=f"Successfully rendered {result.slide_count} slides",
+            slide_count=result.slide_count,
+            slide_filenames=[path.name for path in result.slide_paths],
+            theme_used=plan.theme.name,
+            total_duration=plan.total_duration
+        )
+        
+        logger.info(f"API: Slides rendered successfully - {result.slide_count} files")
+        return response
+        
+    except ValueError as e:
+        logger.warning(f"API: Slide rendering failed - {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("API: Unexpected error during slide rendering")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/download-slide/{filename}",
+    summary="Download a rendered slide",
+    description="Download a specific slide PNG by filename"
+)
+def download_slide(filename: str):
+    """
+    **Download Slide Image**
+    
+    Downloads a rendered slide PNG file.
+    Filename should be like: slide_001.png
+    """
+    from fastapi.responses import FileResponse
+    
+    # Security: prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    slide_path = settings.WORKSPACE_DIR / "slides" / filename
+    
+    if not slide_path.exists():
+        raise HTTPException(status_code=404, detail=f"Slide not found: {filename}")
+    
+    return FileResponse(
+        slide_path,
+        media_type="image/png",
+        filename=filename
+    )
